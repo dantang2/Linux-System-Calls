@@ -1,0 +1,358 @@
+From 54d71a5dcd300c69a97115459466fdf995d1bcb7 Mon Sep 17 00:00:00 2001
+From: dantang <dantang96@gmail.com>
+Date: Fri, 24 Nov 2017 18:16:38 -0800
+Subject: [PATCH 1/2] Simple 'hello-world' Sys-call.
+
+---
+ Makefile                               |  2 +-
+ arch/x86/entry/syscalls/syscall_64.tbl |  1 +
+ cs300/Makefile                         |  1 +
+ cs300/cs300_test.c                     | 17 +++++++++++++++++
+ 4 files changed, 20 insertions(+), 1 deletion(-)
+ create mode 100644 cs300/Makefile
+ create mode 100644 cs300/cs300_test.c
+
+diff --git a/Makefile b/Makefile
+index ccd9818..85241e6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -946,7 +946,7 @@ endif
+ 
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/ cs300/
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index 5aef183..038745f 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -339,6 +339,7 @@
+ 330	common	pkey_alloc		sys_pkey_alloc
+ 331	common	pkey_free		sys_pkey_free
+ 332	common	statx			sys_statx
++340	common	cs300_test		sys_cs300_test
+ 
+ #
+ # x32-specific system call numbers start at 512 to avoid cache impact
+diff --git a/cs300/Makefile b/cs300/Makefile
+new file mode 100644
+index 0000000..e1e14ad
+--- /dev/null
++++ b/cs300/Makefile
+@@ -0,0 +1 @@
++obj-y := cs300_test.o
+diff --git a/cs300/cs300_test.c b/cs300/cs300_test.c
+new file mode 100644
+index 0000000..c801f22
+--- /dev/null
++++ b/cs300/cs300_test.c
+@@ -0,0 +1,17 @@
++#include <linux/kernel.h>
++
++// Implement a HelloWorld system call
++// Argument is passed from call in user space
++
++asmlinkage long sys_cs300_test(int argument)
++{
++  long result = 0;
++
++  printk("Hello World!\n");
++  printk("--syscall argument %d\n", argument);
++
++  result = argument + 1;
++  printk("--returning %d + 1 = %ld\n", argument, result);
++  return result;
++
++}
+-- 
+2.7.4
+
+
+From f17928eb6cc7b81187b2304b53becfa56c8c616f Mon Sep 17 00:00:00 2001
+From: dantang <dantang96@gmail.com>
+Date: Mon, 27 Nov 2017 16:48:26 -0800
+Subject: [PATCH 2/2] prj4 complete
+
+---
+ arch/x86/entry/syscalls/syscall_64.tbl |   2 +
+ cs300/Makefile                         |   2 +-
+ cs300/array_stats.c                    |  80 ++++++++++++++++++++++++
+ cs300/array_stats.h                    |  12 ++++
+ cs300/process_ancestors.c              | 109 +++++++++++++++++++++++++++++++++
+ cs300/process_ancestors.h              |  19 ++++++
+ 6 files changed, 223 insertions(+), 1 deletion(-)
+ create mode 100644 cs300/array_stats.c
+ create mode 100644 cs300/array_stats.h
+ create mode 100644 cs300/process_ancestors.c
+ create mode 100644 cs300/process_ancestors.h
+
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index 038745f..5a4794a 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -340,6 +340,8 @@
+ 331	common	pkey_free		sys_pkey_free
+ 332	common	statx			sys_statx
+ 340	common	cs300_test		sys_cs300_test
++341 	common	array_stats		sys_array_stats
++342 	common	process_ancestors	sys_process_ancestors
+ 
+ #
+ # x32-specific system call numbers start at 512 to avoid cache impact
+diff --git a/cs300/Makefile b/cs300/Makefile
+index e1e14ad..4dd182c 100644
+--- a/cs300/Makefile
++++ b/cs300/Makefile
+@@ -1 +1 @@
+-obj-y := cs300_test.o
++obj-y := cs300_test.o array_stats.o process_ancestors.o
+diff --git a/cs300/array_stats.c b/cs300/array_stats.c
+new file mode 100644
+index 0000000..730eca1
+--- /dev/null
++++ b/cs300/array_stats.c
+@@ -0,0 +1,80 @@
++#include "array_stats.h"
++#include <linux/kernel.h>
++#include <linux/uaccess.h>
++#include <asm/errno.h>
++
++asmlinkage long sys_array_stats(struct array_stats* stats, long data[], long size)
++{
++  struct array_stats temp;
++  long curr;
++  long min;
++  long max;
++  long sum;
++  long i;
++
++  if(size <= 0)
++  {
++    printk("ERROR: size <= 0\n");
++    return -EINVAL;
++  }
++
++  if(data == NULL)
++  {
++    printk("ERROR: data == NULL");
++    return -EFAULT;
++  }
++
++  if(stats==NULL)
++  {
++    printk("ERROR: stats==NULL\n");
++    return -EFAULT;
++  }
++
++  if(copy_from_user(&curr, &data[0], sizeof(long))!=0) // returns non-zero if error
++  {
++    printk("ERROR: Could not copy from user\n");
++    printk("curr = %li, data[0]= %li\n", curr, data[0]);
++    return -EFAULT;
++  }
++
++  min = curr;
++  max = curr;
++  sum = curr;
++
++  for(i=1; i<size; i++)
++  {
++    if(copy_from_user(&curr, &data[i], sizeof(long))!=0)
++    {
++      printk("ERROR: Could not copy from user\n");
++      printk("curr = %li, data[%li]= %li\n", curr, i, data[i]);
++      return -EFAULT;
++    }
++
++    if(curr > max)
++    {
++      max = curr;
++    }
++
++    else if (curr < min)
++    {
++      min = curr;
++    }
++
++    sum += curr;
++  }
++
++  temp.min = min;
++  temp.max = max;
++  temp.sum = sum;
++
++  //debugging purposes
++  printk("Min: %li, Max: %li, Sum: %li\n", min, max, sum);
++
++  if(copy_to_user(stats, &temp, sizeof(struct array_stats)) != 0)
++  {
++    printk("ERROR: Could not copy to user\n");
++    printk("Stats array and/or this local array == NULL\n");
++    return -EFAULT;
++  }
++  return 0;
++}
+diff --git a/cs300/array_stats.h b/cs300/array_stats.h
+new file mode 100644
+index 0000000..5c62830
+--- /dev/null
++++ b/cs300/array_stats.h
+@@ -0,0 +1,12 @@
++#ifndef _ARRAY_STATS_H_
++#define _ARRAY_STATS_H_
++
++struct array_stats
++{
++  long min;
++  long max;
++  long sum;
++
++};
++
++#endif
+diff --git a/cs300/process_ancestors.c b/cs300/process_ancestors.c
+new file mode 100644
+index 0000000..8aad885
+--- /dev/null
++++ b/cs300/process_ancestors.c
+@@ -0,0 +1,109 @@
++#include "process_ancestors.h"
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/cred.h>
++#include <linux/uaccess.h>
++#include <asm/errno.h>
++
++asmlinkage long sys_process_ancestors(struct process_info info_array[], long size, long* num_filled)
++{
++  struct task_struct *currentProcess = current;
++  struct process_info thisProcess;
++
++  long i = 0;
++
++  if(size<=0)
++  {
++    printk("ERROR: Size <= 0\n");
++    return -EINVAL;
++  }
++
++  if(num_filled ==NULL)
++  {
++    printk("ERROR: num_filled == NULL\n");
++    return -EFAULT;
++  }
++
++  if(info_array == NULL)
++  {
++    printk("ERROR: info_array == NULL\n");
++    return -EFAULT;
++  }
++
++  while(i < size && (currentProcess->real_parent != currentProcess))
++  {
++    long numberOfSiblings = 0;
++    long numberOfChildren = 0;
++    struct list_head *travel_node = NULL;
++    struct list_head *travel_node2 = NULL;
++
++    if(i > 0)
++    {
++      currentProcess = currentProcess->real_parent;
++    }
++
++
++    thisProcess.pid = currentProcess->pid;
++
++    strcpy(thisProcess.name, currentProcess->comm);
++
++    thisProcess.state = currentProcess->state;
++
++    thisProcess.uid = currentProcess->cred->uid.val;
++
++    thisProcess.nvcsw = currentProcess->nvcsw;
++
++    thisProcess.nivcsw = currentProcess -> nivcsw;
++
++    if(list_empty(&(currentProcess->children))!=1)
++    {
++      list_for_each(travel_node, &(currentProcess->children))
++      {
++        numberOfChildren++;
++      }
++    }
++
++    if(list_empty(&(currentProcess->sibling))!= 1)
++    {
++      list_for_each(travel_node2, &(currentProcess->sibling))
++      {
++        numberOfSiblings++;
++      }
++    }
++
++    thisProcess.num_children = numberOfChildren;
++    thisProcess.num_siblings = numberOfSiblings;
++
++    //debugging purposes
++    printk("pid: %li\n", (long)currentProcess->pid);
++    printk("name: %li\n", (long)currentProcess->comm);
++    printk("state: %li\n", (long)currentProcess->state);
++    printk("uid: %li\n", (long)(currentProcess->cred)->uid.val);
++    printk("nvcsw: %li\n", (long)currentProcess->nvcsw);
++    printk("nivcsw: %li\n", (long)currentProcess->nivcsw);
++    printk("num_children: %li\n", numberOfChildren);
++    printk("num_siblings: %li\n", numberOfSiblings);
++    printk("------------------------------\n");
++
++
++    if(copy_to_user(&info_array[i], &thisProcess, sizeof(struct process_info)))
++    {
++      printk("ERROR: Could not copy to user\n");
++      printk("info_array[%li] == NULL and/or thisProcess == NULL\n", i);
++      return -EFAULT;
++    }
++
++    i++;
++
++  }
++
++  if(copy_to_user(num_filled, &i, sizeof(long)))
++  {
++    printk("ERROR: Could not copy to user\n");
++    printk("num_filled = %li, i = %li\n", num_filled, i);
++    return -EFAULT;
++  }
++
++  return 0;
++
++}
+diff --git a/cs300/process_ancestors.h b/cs300/process_ancestors.h
+new file mode 100644
+index 0000000..9a989f0
+--- /dev/null
++++ b/cs300/process_ancestors.h
+@@ -0,0 +1,19 @@
++#ifndef _PROCESS_ANCESTORS_H
++#define _PROCESS_ANCESTORS_H
++
++#define ANCESTOR_NAME_LEN 16
++
++struct process_info
++{
++  long pid; /* Process ID */
++  char name[ANCESTOR_NAME_LEN]; /* Program name of process */
++  long state; /* Current process state */
++  long uid; /* User ID of process owner */
++  long nvcsw; /* # voluntary context switches*/
++  long nivcsw; /* # involuntary context switches */
++  long num_children; /* # children process has */
++  long num_siblings; /* # sibling process has */
++
++};
++
++#endif
+-- 
+2.7.4
+
